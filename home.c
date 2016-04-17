@@ -1,3 +1,8 @@
+
+// Smarthome Controller
+// (c) Hunter Forsyth 2016
+
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -10,35 +15,29 @@
 #include <netinet/in.h>
 #include <netdb.h>
 
+#include "cJSON.h"
 #include "config.h"
 
-// Smarthome Controller
-// (c) Hunter Forsyth 2016
-
 #define BUFFER_SIZE 1024
-char buffer[BUFFER_SIZE];
 
+// HSV color converter below from:
+// http://en.literateprograms.org/RGB_to_HSV_color_space_conversion_(C)
 struct rgb_color {
     double r, g, b;    /* Channel intensities between 0.0 and 1.0 */
 };
-
 struct hsv_color {
     double hue;        /* Hue degree between 0.0 and 360.0 */
     double sat;        /* Saturation between 0.0 (gray) and 1.0 */
     double val;        /* Value between 0.0 (black) and 1.0 */
 };
-
 #define MIN3(x,y,z)  ((y) <= (z) ? \
                          ((x) <= (y) ? (x) : (y)) \
                      : \
                          ((x) <= (z) ? (x) : (z)))
-
 #define MAX3(x,y,z)  ((y) >= (z) ? \
                          ((x) >= (y) ? (x) : (y)) \
                      : \
                          ((x) >= (z) ? (x) : (z)))
-
-// From: http://en.literateprograms.org/RGB_to_HSV_color_space_conversion_(C)
 struct hsv_color rgb_to_hsv(struct rgb_color rgb) {
     struct hsv_color hsv;
     double rgb_min, rgb_max;
@@ -116,47 +115,70 @@ int socket_connect(char *host, in_port_t port){
     return sock;
 }
 
-// Send a PUT to BRIDGE_IP/api/USER/%p, where %p is the path arg below.
-// Specify a json to send in the body arg.
-// Updates global variable buffer to be the response.
-void send_PUT(char* path, char* body){
+/* Send a PUT or GET to BRIDGE_IP/api/USER/%p, where %p is the 'path' arg below.
+   If 'put_req' is 1 it will be a PUT request, otherwise it will be a GET request.
+   Specify a json to send in the 'body' arg for a PUT request.
+   'body' can be NULL for a GET request.
+   Return the response.
+*/
+char* send_req(char* path, char* body, int put_req){
 
     // Connect to the socket:
     int fd;
     fd = socket_connect(BRIDGE_IP, 80);
 
-    // Construct the json:
     char json[256];
-    strcpy(json, body);
     char len_str[15];
-    int len = strlen(json);
-    sprintf(len_str, "%d", len);
+    if (put_req == 1){
+        // Construct the json:
+        strcpy(json, body);
+        int len = strlen(json);
+        sprintf(len_str, "%d", len);
+    }
 
     // Construct the request:
     char req[256];
-    strcpy(req, "PUT /api/");
+    if (put_req == 1){strcpy(req, "PUT /api/");}
+    else             {strcpy(req, "GET /api/");}
     strcat(req, USER);
-    strcat(req, path); // TODO
-    strcat(req, " HTTP/1.0\r\nContent-Type: text/json\r\nContent-Length: ");
-    strcat(req, len_str);
-    strcat(req, "\r\n\r\n");
-    strcat(req, json);
+    strcat(req, path);
+    strcat(req, " HTTP/1.0\r\n");
+    if (put_req == 1){
+        strcat(req, "Content-Type: text/json\r\nContent-Length: ");
+        strcat(req, len_str);
+        strcat(req, "\r\n\r\n");
+        strcat(req, json);
+    } else {
+        strcat(req, "\r\n");
+    }
 
     write(fd, req, strlen(req));
 
     // Retrieve the response:
+    static char response[4096];
+    char buffer[BUFFER_SIZE];
+    int i = 0;
     bzero(buffer, BUFFER_SIZE);
     while(read(fd, buffer, BUFFER_SIZE - 1) != 0){
+        if (i > 0){
+            strcat(response, buffer);
+        } else {
+            strcpy(response, buffer);
+        }
         bzero(buffer, BUFFER_SIZE);
+        i++;
     }
 
     shutdown(fd, SHUT_RDWR);
     close(fd);
 
+    return response;
+
 }
 
-// Set the light specified by lightnum to r,g,b values.
-// Also controls the light's on/off state automatically.
+/* Set the light specified by 'lightnum' to r,g,b values.
+   Also controls the light's on/off state automatically.
+*/
 void control_light(int lightnum, int r, int g, int b){
 
     // Turn light on iff color specified.
@@ -216,12 +238,46 @@ void control_light(int lightnum, int r, int g, int b){
     strcat(json, h_str);
     strcat(json, "}");
 
-    send_PUT(req, json);
+    send_req(req, json, 1);
 
 }
 
 void list_lights(){
-    // TODO
+
+    // Query lights with a GET request:
+    char* req = "/lights";
+    char* res = send_req(req, NULL, 0);
+
+    // Separate the response JSON from the header:
+    char* token;
+    char json[4096];
+    token = strtok(res, "\r\n");
+    while (token != NULL){
+          strcpy(json, token);
+          token = strtok(NULL, "\r\n");
+    }
+
+    // Parse the response JSON:
+    cJSON* root = cJSON_Parse(json);
+    cJSON* light;
+    if (root != NULL){
+        int i = 1;
+        char light_index[3];
+        sprintf(light_index, "%d", i);
+        while ((light = cJSON_GetObjectItem(root, light_index)) != NULL){
+            char* light_name = cJSON_GetObjectItem(light,"name")->valuestring;
+            if (light_name != NULL){
+                printf("%s: %s\n", light_index, light_name);
+            }
+            i++;
+            sprintf(light_index, "%d", i);
+            if (i > 20){
+                break;
+            }
+        }
+    }
+
+
 }
 
 int main(int argc, char *argv[]){
@@ -235,18 +291,26 @@ int main(int argc, char *argv[]){
         printf("\nSmarthome controller\n(c) 2016 Hunter Forsyth\n\n");
         printf("Currently supports Philips Hue. Bridge IP and user key are inside config.h\n\n");
         printf("Usage:\n\n");
-        printf("  home light <lightnum> <r>,<g>,<b>\n");
-        printf("  For example:\n    $ home light 1 255,0,255\n\n");
-        printf("  home lights <lightnum_1>,<lightnum_2>,...,<lightnum_n> <r>,<g>,<b>\n");
-        printf("  For example:\n    $ home lights 1,2,3,4 255,255,255");
+
+        printf("  home listlights\n");
+        printf("  - List each light by their lightnum.\n\n");
+
+        printf("  home light [lightnum] [r],[g],[b]\n");
+        printf("  - Set a single light's color.\n");
+        printf("  - For example:\n    $ home light 1 255,0,255\n\n");
+
+        printf("  home lights [lightnum_1],[lightnum_2],...,[lightnum_n] [r],[g],[b]\n");
+        printf("  - Set the color of multiple lights.\n");
+        printf("  - For example:\n    $ home lights 1,2,3,4 255,255,255");
         printf("\n    $ home lights all red\n\n");
+
         printf("  An r,g,b color can be replaced with one of the keywords:\n");
-        printf("      on, off, red, blue, green, white, orange, reading, purple, pink\n\n");
+        printf("  {on, off, red, blue, green, white, orange, yellow, purple, pink, reading}\n\n");
     }
 
     // List lights:
     if(strcmp(argv[1], "listlights") == 0){
-        printf("Not yet implemented :)\n");
+        list_lights();
     }
 
     // Send a light request:
@@ -306,6 +370,9 @@ int main(int argc, char *argv[]){
         } else if ((strcmp(argv[3], "orange")) == 0){ // ORANGE
             used_keyword = 1;
             r = 255; g = 200; b = 0;
+        } else if ((strcmp(argv[3], "yellow")) == 0){ // YELLOW
+            used_keyword = 1;
+            r = 220; g = 255; b = 0;
         } else if ((strcmp(argv[3], "reading")) == 0){ // READING
             used_keyword = 1;
             r = 200; g = 255; b = 100;
