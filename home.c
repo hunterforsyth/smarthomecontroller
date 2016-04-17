@@ -17,73 +17,10 @@
 
 #include "cJSON.h"
 #include "config.h"
+#include "rgb_to_hsv.h"
 
 #define BUFFER_SIZE 1024
-
-// HSV color converter below from:
-// http://en.literateprograms.org/RGB_to_HSV_color_space_conversion_(C)
-struct rgb_color {
-    double r, g, b;    /* Channel intensities between 0.0 and 1.0 */
-};
-struct hsv_color {
-    double hue;        /* Hue degree between 0.0 and 360.0 */
-    double sat;        /* Saturation between 0.0 (gray) and 1.0 */
-    double val;        /* Value between 0.0 (black) and 1.0 */
-};
-#define MIN3(x,y,z)  ((y) <= (z) ? \
-                         ((x) <= (y) ? (x) : (y)) \
-                     : \
-                         ((x) <= (z) ? (x) : (z)))
-#define MAX3(x,y,z)  ((y) >= (z) ? \
-                         ((x) >= (y) ? (x) : (y)) \
-                     : \
-                         ((x) >= (z) ? (x) : (z)))
-struct hsv_color rgb_to_hsv(struct rgb_color rgb) {
-    struct hsv_color hsv;
-    double rgb_min, rgb_max;
-    rgb_min = MIN3(rgb.r, rgb.g, rgb.b);
-    rgb_max = MAX3(rgb.r, rgb.g, rgb.b);
-    hsv.val = rgb_max;
-    if (hsv.val == 0) {
-        hsv.hue = hsv.sat = 0;
-        return hsv;
-    }
-    /* Normalize value to 1 */
-    rgb.r /= hsv.val;
-    rgb.g /= hsv.val;
-    rgb.b /= hsv.val;
-    rgb_min = MIN3(rgb.r, rgb.g, rgb.b);
-    rgb_max = MAX3(rgb.r, rgb.g, rgb.b);
-    hsv.sat = rgb_max - rgb_min;
-    if (hsv.sat == 0) {
-        hsv.hue = 0;
-        return hsv;
-    }
-    /* Normalize saturation to 1 */
-    rgb.r = (rgb.r - rgb_min)/(rgb_max - rgb_min);
-    rgb.g = (rgb.g - rgb_min)/(rgb_max - rgb_min);
-    rgb.b = (rgb.b - rgb_min)/(rgb_max - rgb_min);
-    rgb_min = MIN3(rgb.r, rgb.g, rgb.b);
-    rgb_max = MAX3(rgb.r, rgb.g, rgb.b);
-    /* Compute hue */
-    if (rgb_max == rgb.r) {
-        hsv.hue = 0.0 + 60.0*(rgb.g - rgb.b);
-        if (hsv.hue < 0.0) {
-            hsv.hue += 360.0;
-        }
-    } else if (rgb_max == rgb.g) {
-        hsv.hue = 120.0 + 60.0*(rgb.b - rgb.r);
-    } else /* rgb_max == rgb.b */ {
-        hsv.hue = 240.0 + 60.0*(rgb.r - rgb.g);
-    }
-
-    // Modified to support hue's color format:
-    hsv.hue = (hsv.hue/360) * 65535;
-    hsv.sat = hsv.sat * 254;
-    hsv.val = hsv.val * 254;
-
-    return hsv;
-}
+#define HELP "Try:\n    $ home help\n"
 
 // From: https://gist.github.com/nolim1t/126991
 int socket_connect(char *host, in_port_t port){
@@ -242,6 +179,7 @@ void control_light(int lightnum, int r, int g, int b){
 
 }
 
+/* Print a list of all connected lights by their lightnum. */
 void list_lights(){
 
     // Query lights with a GET request:
@@ -284,7 +222,7 @@ int main(int argc, char *argv[]){
 
     // Check args:
     if(argc < 2){
-        printf("Try home --help\n");
+        printf(HELP);
         exit(1);
     }
     if(strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "help") == 0){
@@ -305,7 +243,7 @@ int main(int argc, char *argv[]){
         printf("\n    $ home lights all red\n\n");
 
         printf("  An r,g,b color can be replaced with one of the keywords:\n");
-        printf("  {on, off, red, blue, green, white, orange, yellow, purple, pink, reading}\n\n");
+        printf("    {on, off, white, reading, yellow, orange, red, pink,\n    purple, blue, cyan, green}\n\n");
     }
 
     // List lights:
@@ -316,7 +254,7 @@ int main(int argc, char *argv[]){
     // Send a light request:
     if(strcmp(argv[1], "light") == 0 || strcmp(argv[1], "lights") == 0){
         if (argc != 4){
-            printf("Try home --help\n");
+            printf(HELP);
             exit(1);
         }
         int lightarray[10];
@@ -382,6 +320,9 @@ int main(int argc, char *argv[]){
         } else if ((strcmp(argv[3], "pink")) == 0){ // PINK
             used_keyword = 1;
             r = 255; g = 100; b = 255;
+        } else if ((strcmp(argv[3], "cyan")) == 0){ // CYAN
+            used_keyword = 1;
+            r = 0; g = 150; b = 255;
         } else {
             // RGB color
             if ((token = strsep(&argv[3], ",")) != NULL){
@@ -403,7 +344,7 @@ int main(int argc, char *argv[]){
                 }
             }
         } else {
-            printf("Try: home help\n");
+            printf(HELP);
             exit(1);
         }
     }

@@ -19,4 +19,5 @@
    (similar steps at: http://www.developers.meethue.com/documentation/getting-started)
 */
 #define USER "16e5a5ed363dea765934a93b18a8c3"
+
 // ----------------------------------
